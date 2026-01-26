@@ -1,5 +1,7 @@
 package com.kezong.fataar
 
+import com.android.build.api.variant.AndroidComponentsExtension
+import com.android.build.api.variant.Variant
 import com.android.build.gradle.api.LibraryVariant
 import org.gradle.api.Plugin
 import org.gradle.api.Project
@@ -31,7 +33,9 @@ class FatAarPlugin implements Plugin<Project> {
 
     private final Collection<Configuration> embedConfigurations = new ArrayList<>()
 
-    private MapProperty<String, List<AndroidArchiveLibrary>> variantPackagesProperty;
+    private MapProperty<String, List<AndroidArchiveLibrary>> variantPackagesProperty
+
+    private final List<VariantInfo> variantInfos = new ArrayList<>()
 
     private CalculatedValueContainerFactory calculatedValueContainerFactory
 
@@ -59,6 +63,7 @@ class FatAarPlugin implements Plugin<Project> {
         project.afterEvaluate {
             doAfterEvaluate()
         }
+        registerAndroidComponents()
     }
 
     private registerTransform() {
@@ -66,11 +71,30 @@ class FatAarPlugin implements Plugin<Project> {
         FatAarPluginHelper.registerAsmTransformation(project, variantPackagesProperty)
     }
 
+    private void registerAndroidComponents() {
+        AndroidComponentsExtension<?, ?, Variant> components =
+                project.extensions.getByType(AndroidComponentsExtension.class)
+        components.onVariants(components.selector().all()) { variant ->
+            VariantInfo variantInfo = VariantInfo.fromNew(variant)
+            if (!variantPackagesProperty.getOrElse([:]).containsKey(variantInfo.name)) {
+                variantPackagesProperty.put(variantInfo.name, project.objects.listProperty(AndroidArchiveLibrary.class))
+            }
+            variantInfos.add(variantInfo)
+        }
+    }
+
     private void doAfterEvaluate() {
         embedConfigurations.each {
             if (project.fataar.transitive) {
                 it.transitive = true
             }
+        }
+
+        if (FatUtils.compareVersion(VersionAdapter.AGPVersion, "9.0.0") >= 0) {
+            variantInfos.each { variantInfo ->
+                processVariantWithInfo(variantInfo)
+            }
+            return
         }
 
         project.android.libraryVariants.all { variant ->
@@ -92,6 +116,33 @@ class FatAarPlugin implements Plugin<Project> {
                 def processor = new VariantProcessor(project, variant, variantPackagesProperty)
                 processor.processVariant(artifacts, firstLevelDependencies)
             }
+        }
+    }
+
+    private void processVariantWithInfo(VariantInfo variantInfo) {
+        embedConfigurations.each {
+            if (project.fataar.transitive) {
+                it.transitive = true
+            }
+        }
+
+        Collection<ResolvedArtifact> artifacts = new ArrayList()
+        Collection<ResolvedDependency> firstLevelDependencies = new ArrayList<>()
+        embedConfigurations.each { configuration ->
+            if (configuration.name == CONFIG_NAME
+                    || (variantInfo.buildTypeName != null && configuration.name == variantInfo.buildTypeName + CONFIG_SUFFIX)
+                    || (variantInfo.flavorName != null && configuration.name == variantInfo.flavorName + CONFIG_SUFFIX)
+                    || configuration.name == variantInfo.name + CONFIG_SUFFIX) {
+                Collection<ResolvedArtifact> resolvedArtifacts = resolveArtifacts(configuration)
+                artifacts.addAll(resolvedArtifacts)
+                artifacts.addAll(dealUnResolveArtifacts(configuration, variantInfo, resolvedArtifacts))
+                firstLevelDependencies.addAll(configuration.resolvedConfiguration.firstLevelModuleDependencies)
+            }
+        }
+
+        if (!artifacts.isEmpty()) {
+            def processor = new VariantProcessor(project, variantInfo, variantPackagesProperty)
+            processor.processVariant(artifacts, firstLevelDependencies)
         }
     }
 
@@ -163,6 +214,27 @@ class FatAarPlugin implements Plugin<Project> {
             if (!match) {
                 def flavorArtifact = FlavorArtifact.createFlavorArtifact(
                         project, variant, dependency, calculatedValueContainerFactory, fileResolver, taskDependencyFactory
+                )
+                if (flavorArtifact != null) {
+                    artifactList.add(flavorArtifact)
+                }
+            }
+        }
+        return artifactList
+    }
+
+    private Collection<ResolvedArtifact> dealUnResolveArtifacts(Configuration configuration,
+                                                                VariantInfo variantInfo,
+                                                                Collection<ResolvedArtifact> artifacts) {
+        def artifactList = new ArrayList()
+        configuration.resolvedConfiguration.firstLevelModuleDependencies.each { dependency ->
+            def match = artifacts.any { artifact ->
+                dependency.moduleName == artifact.moduleVersion.id.name
+            }
+
+            if (!match) {
+                def flavorArtifact = FlavorArtifact.createFlavorArtifact(
+                        project, variantInfo, dependency, calculatedValueContainerFactory, fileResolver, taskDependencyFactory
                 )
                 if (flavorArtifact != null) {
                     artifactList.add(flavorArtifact)

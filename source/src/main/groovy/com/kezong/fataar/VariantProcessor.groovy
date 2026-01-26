@@ -8,7 +8,6 @@ import org.gradle.api.Task
 import org.gradle.api.artifacts.ResolvedArtifact
 import org.gradle.api.artifacts.ResolvedDependency
 import org.gradle.api.file.DuplicatesStrategy
-import org.gradle.api.internal.artifacts.ResolvableDependency
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.tasks.Copy
@@ -29,6 +28,8 @@ final class VariantProcessor {
 
     private final LibraryVariant mVariant
 
+    private final VariantInfo mVariantInfo
+
     private final Collection<AndroidArchiveLibrary> mAndroidArchiveLibraries = new ArrayList<>()
 
     private final ListProperty<AndroidArchiveLibrary> mAndroidArchiveLibrariesProperty
@@ -46,10 +47,23 @@ final class VariantProcessor {
                      MapProperty<String, List<AndroidArchiveLibrary>> variantPackagesProperty) {
         mProject = project
         mVariant = variant
+        mVariantInfo = VariantInfo.fromLegacy(variant)
         mVersionAdapter = new VersionAdapter(project, variant)
         mDirectoryManager = new DirectoryManager(project, variant)
         mAndroidArchiveLibrariesProperty = mProject.objects.listProperty(AndroidArchiveLibrary.class)
         variantPackagesProperty.put(mVariant.getName(), mAndroidArchiveLibrariesProperty)
+    }
+
+    VariantProcessor(Project project,
+                     VariantInfo variantInfo,
+                     MapProperty<String, List<AndroidArchiveLibrary>> variantPackagesProperty) {
+        mProject = project
+        mVariant = null
+        mVariantInfo = variantInfo
+        mVersionAdapter = new VersionAdapter(project, variantInfo)
+        mDirectoryManager = new DirectoryManager(project, variantInfo)
+        mAndroidArchiveLibrariesProperty = mProject.objects.listProperty(AndroidArchiveLibrary.class)
+        variantPackagesProperty.put(mVariantInfo.name, mAndroidArchiveLibrariesProperty)
     }
 
     void addAndroidArchiveLibrary(AndroidArchiveLibrary library) {
@@ -62,13 +76,12 @@ final class VariantProcessor {
     }
 
     void processVariant(Collection<ResolvedArtifact> artifacts,
-                        Collection<ResolvableDependency> dependencies) {
-        String taskPath = 'pre' + mVariant.name.capitalize() + 'Build'
-        TaskProvider prepareTask = mProject.tasks.named(taskPath)
+                        Collection<ResolvedDependency> dependencies) {
+        TaskProvider prepareTask = resolvePrepareTask()
         if (prepareTask == null) {
-            throw new RuntimeException("Can not find task ${taskPath}!")
+            throw new RuntimeException("Can not find prepare task for variant ${mVariantInfo.name}!")
         }
-        TaskProvider bundleTask = VersionAdapter.getBundleTaskProvider(mProject, mVariant.name)
+        TaskProvider bundleTask = VersionAdapter.getBundleTaskProvider(mProject, mVariantInfo.name)
         preEmbed(artifacts, dependencies, prepareTask)
         processArtifacts(artifacts, prepareTask, bundleTask)
         processClassesAndJars(bundleTask)
@@ -83,6 +96,23 @@ final class VariantProcessor {
         processGenerateProguard()
         processDataBinding(bundleTask)
         processDeepLinkTasks()
+    }
+
+    private TaskProvider resolvePrepareTask() {
+        String variantTaskPath = 'pre' + mVariantInfo.name.capitalize() + 'Build'
+        TaskProvider prepareTask = null
+        try {
+            prepareTask = mProject.tasks.named(variantTaskPath)
+        } catch (Exception ignore) {
+        }
+        if (prepareTask != null) {
+            return prepareTask
+        }
+        try {
+            return mProject.tasks.named('preBuild')
+        } catch (Exception ignore) {
+            return null
+        }
     }
 
     private static void printEmbedArtifacts(Collection<ResolvedArtifact> artifacts,
@@ -126,7 +156,7 @@ final class VariantProcessor {
     private void preEmbed(Collection<ResolvedArtifact> artifacts,
                           Collection<ResolvedDependency> dependencies,
                           TaskProvider prepareTask) {
-        TaskProvider embedTask = mProject.tasks.register("pre${mVariant.name.capitalize()}Embed") {
+        TaskProvider embedTask = mProject.tasks.register("pre${mVariantInfo.name.capitalize()}Embed") {
             doFirst {
                 printEmbedArtifacts(artifacts, dependencies)
             }
@@ -138,7 +168,7 @@ final class VariantProcessor {
     }
 
     private void processDeepLinkTasks() {
-        String taskName = "extractDeepLinksForAar${mVariant.name.capitalize()}"
+        String taskName = "extractDeepLinksForAar${mVariantInfo.name.capitalize()}"
         TaskProvider extractDeepLinksForAar = mProject.tasks.named(taskName)
         if (extractDeepLinksForAar == null) {
             throw new RuntimeException("Can not find task ${taskName}!")
@@ -148,7 +178,7 @@ final class VariantProcessor {
             dependsOn(mExplodeTasks)
         }
 
-        TaskProvider extractDeepLinks = mProject.tasks.named("extractDeepLinks${mVariant.name.capitalize()}")
+        TaskProvider extractDeepLinks = mProject.tasks.named("extractDeepLinks${mVariantInfo.name.capitalize()}")
         if (extractDeepLinks != null) {
             extractDeepLinks.configure {
                 dependsOn(mExplodeTasks)
@@ -207,7 +237,7 @@ final class VariantProcessor {
             if (FatAarPlugin.ARTIFACT_TYPE_JAR == artifact.type) {
                 addJarFile(artifact.file)
             } else if (FatAarPlugin.ARTIFACT_TYPE_AAR == artifact.type) {
-                AndroidArchiveLibrary archiveLibrary = new AndroidArchiveLibrary(mProject, artifact, mVariant.name)
+                AndroidArchiveLibrary archiveLibrary = new AndroidArchiveLibrary(mProject, artifact, mVariantInfo.name)
                 addAndroidArchiveLibrary(archiveLibrary)
                 Set<Task> dependencies = getTaskDependencies(artifact)
 
@@ -215,7 +245,7 @@ final class VariantProcessor {
                 zipFolder.mkdirs()
                 def group = artifact.getModuleVersion().id.group.capitalize()
                 def name = artifact.name.capitalize()
-                String taskName = "explode${group}${name}${mVariant.name.capitalize()}"
+                String taskName = "explode${group}${name}${mVariantInfo.name.capitalize()}"
                 Task explodeTask = mProject.tasks.create(taskName, Copy) {
                     from mProject.zipTree(artifact.file.absolutePath)
                     into zipFolder
@@ -250,11 +280,11 @@ final class VariantProcessor {
         File manifestOutput
         if (FatUtils.compareVersion(VersionAdapter.AGPVersion, "8.3.0") >= 0) {
             manifestOutput = mProject.file(
-                    "${mProject.buildDir.path}/intermediates/merged_manifest/${mVariant.name}/process${mVariant.name.capitalize()}Manifest/AndroidManifest.xml"
+                    "${mProject.buildDir.path}/intermediates/merged_manifest/${mVariantInfo.name}/process${mVariantInfo.name.capitalize()}Manifest/AndroidManifest.xml"
             )
         } else {
             manifestOutput = mProject.file(
-                    "${mProject.buildDir.path}/intermediates/merged_manifest/${mVariant.name}/AndroidManifest.xml"
+                    "${mProject.buildDir.path}/intermediates/merged_manifest/${mVariantInfo.name}/AndroidManifest.xml"
             )
         }
 
@@ -264,7 +294,7 @@ final class VariantProcessor {
         }
 
         TaskProvider<LibraryManifestMerger> manifestsMergeTask = mProject
-                .tasks.register("merge${mVariant.name.capitalize()}Manifest", LibraryManifestMerger) {
+                .tasks.register("merge${mVariantInfo.name.capitalize()}Manifest", LibraryManifestMerger) {
             if (FatUtils.compareVersion(VersionAdapter.AGPVersion, "8.13.0") >= 0) {
                 withMergerFeatures(ManifestMerger2.Invoker.Feature.USES_SDK_IN_MANIFEST_LENIENT_HANDLING)
             }
@@ -284,14 +314,14 @@ final class VariantProcessor {
     }
 
     private TaskProvider handleClassesMergeTask(final boolean isMinifyEnabled) {
-        return mProject.tasks.register("mergeClasses" + mVariant.name.capitalize()) {
+        return mProject.tasks.register("mergeClasses" + mVariantInfo.name.capitalize()) {
             outputs.upToDateWhen { false }
 
             dependsOn(mExplodeTasks)
             dependsOn(mVersionAdapter.getJavaCompileTask())
             try {
                 // main lib maybe not use kotlin
-                TaskProvider kotlinCompile = mProject.tasks.named("compile${mVariant.name.capitalize()}Kotlin")
+                TaskProvider kotlinCompile = mProject.tasks.named("compile${mVariantInfo.name.capitalize()}Kotlin")
                 if (kotlinCompile != null) {
                     dependsOn(kotlinCompile)
                 }
@@ -340,7 +370,7 @@ final class VariantProcessor {
     }
 
     private TaskProvider handleJarMergeTask(final TaskProvider syncLibTask) {
-        final TaskProvider task = mProject.tasks.register("mergeJars" + mVariant.name.capitalize()) {
+        final TaskProvider task = mProject.tasks.register("mergeJars" + mVariantInfo.name.capitalize()) {
             dependsOn(mExplodeTasks)
             dependsOn(mVersionAdapter.getJavaCompileTask())
             mustRunAfter(syncLibTask)
@@ -399,12 +429,12 @@ final class VariantProcessor {
      * merge classes and jars
      */
     private void processClassesAndJars(TaskProvider<Task> bundleTask) {
-        boolean isMinifyEnabled = mVariant.getBuildType().isMinifyEnabled()
+        boolean isMinifyEnabled = mVariantInfo.minifyEnabled
 
         final TaskProvider syncLibTask = mProject.tasks.named(mVersionAdapter.getSyncLibJarsTaskPath())
-        final TaskProvider extractAnnotationsTask = mProject.tasks.named("extract${mVariant.name.capitalize()}Annotations")
+        final TaskProvider extractAnnotationsTask = mProject.tasks.named("extract${mVariantInfo.name.capitalize()}Annotations")
         final TaskProvider transformClassesWithAsmTask = mProject.tasks.named(
-                "transform${mVariant.name.capitalize()}ClassesWithAsm"
+                "transform${mVariantInfo.name.capitalize()}ClassesWithAsm"
         )
 
         final TaskProvider mergeClassTask = handleClassesMergeTask(isMinifyEnabled)
@@ -437,7 +467,7 @@ final class VariantProcessor {
      * Adding "android.disableResourceValidation=true" to "gradle.properties" can do a trick to skip the exception, but is not recommended.
      */
     private void processResources() {
-        String taskPath = "generate" + mVariant.name.capitalize() + "Resources"
+        String taskPath = "generate" + mVariantInfo.name.capitalize() + "Resources"
         TaskProvider resourceGenTask = mProject.tasks.named(taskPath)
         if (resourceGenTask == null) {
             throw new RuntimeException("Can not find task ${taskPath}!")
@@ -447,11 +477,17 @@ final class VariantProcessor {
             dependsOn(mExplodeTasks)
         }
 
-        for (archiveLibrary in mAndroidArchiveLibraries) {
-            FatUtils.logInfo("Merge resource，Library res：${archiveLibrary.resFolder}")
-            mVariant.registerGeneratedResFolders(
-                    mProject.files(archiveLibrary.resFolder)
-            )
+        if (mVariant != null) {
+            for (archiveLibrary in mAndroidArchiveLibraries) {
+                FatUtils.logInfo("Merge resource，Library res：${archiveLibrary.resFolder}")
+                mVariant.registerGeneratedResFolders(
+                        mProject.files(archiveLibrary.resFolder)
+                )
+            }
+        } else {
+            for (archiveLibrary in mAndroidArchiveLibraries) {
+                FatUtils.logInfo("Merge resource，Library res：${archiveLibrary.resFolder}")
+            }
         }
     }
 
@@ -469,7 +505,7 @@ final class VariantProcessor {
         assetsTask.dependsOn(mExplodeTasks)
         assetsTask.doFirst {
             mProject.android.sourceSets.each {
-                if (it.name == mVariant.name) {
+                if (it.name == mVariantInfo.name) {
                     for (archiveLibrary in mAndroidArchiveLibraries) {
                         if (archiveLibrary.assetsFolder != null && archiveLibrary.assetsFolder.exists()) {
                             FatUtils.logInfo("Merge assets，Library assets folder：${archiveLibrary.assetsFolder}")
@@ -485,7 +521,7 @@ final class VariantProcessor {
      * merge jniLibs
      */
     private void processJniLibs() {
-        String taskPath = 'merge' + mVariant.name.capitalize() + 'JniLibFolders'
+        String taskPath = 'merge' + mVariantInfo.name.capitalize() + 'JniLibFolders'
         TaskProvider mergeJniLibsTask = mProject.tasks.named(taskPath)
         if (mergeJniLibsTask == null) {
             throw new RuntimeException("Can not find task ${taskPath}!")
@@ -498,7 +534,7 @@ final class VariantProcessor {
                 for (archiveLibrary in mAndroidArchiveLibraries) {
                     if (archiveLibrary.jniFolder != null && archiveLibrary.jniFolder.exists()) {
                         mProject.android.sourceSets.each {
-                            if (it.name == mVariant.name) {
+                            if (it.name == mVariantInfo.name) {
                                 it.jniLibs.srcDir(archiveLibrary.jniFolder)
                             }
                         }
@@ -512,7 +548,7 @@ final class VariantProcessor {
      * merge proguard.txt
      */
     private void processConsumerProguard() {
-        String mergeTaskName = 'merge' + mVariant.name.capitalize() + 'ConsumerProguardFiles'
+        String mergeTaskName = 'merge' + mVariantInfo.name.capitalize() + 'ConsumerProguardFiles'
         TaskProvider mergeFileTask = mProject.tasks.named(mergeTaskName)
         if (mergeFileTask == null) {
             throw new RuntimeException("Can not find task ${mergeTaskName}!")
@@ -548,7 +584,7 @@ final class VariantProcessor {
     private void processGenerateProguard() {
         TaskProvider mergeGenerateProguardTask
         try {
-            String mergeName = 'merge' + mVariant.name.capitalize() + 'GeneratedProguardFiles'
+            String mergeName = 'merge' + mVariantInfo.name.capitalize() + 'GeneratedProguardFiles'
             mergeGenerateProguardTask = mProject.tasks.named(mergeName)
         } catch (Exception ignore) {
             return
