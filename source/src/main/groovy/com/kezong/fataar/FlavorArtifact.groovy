@@ -66,6 +66,47 @@ class FlavorArtifact {
         )
     }
 
+    static ResolvedArtifact createFlavorArtifact(Project project,
+                                                 VariantInfo variantInfo,
+                                                 ResolvedDependency unResolvedArtifact,
+                                                 CalculatedValueContainerFactory calculatedValueContainerFactory,
+                                                 FileResolver fileResolver,
+                                                 TaskDependencyFactory taskDependencyFactory
+    ) {
+        Project artifactProject = getArtifactProject(project, unResolvedArtifact)
+        TaskProvider bundleProvider
+        try {
+            bundleProvider = getBundleTask(artifactProject, variantInfo)
+        } catch (Exception ex) {
+            FatUtils.logError("[$variantInfo.name]Can not resolve :$unResolvedArtifact.moduleName", ex)
+            return null
+        }
+
+        if (bundleProvider == null) {
+            FatUtils.logError("[$variantInfo.name]Can not resolve :$unResolvedArtifact.moduleName")
+            return null
+        }
+
+        ModuleVersionIdentifier identifier = createModuleVersionIdentifier(unResolvedArtifact)
+        File artifactFile = createArtifactFile(bundleProvider.get())
+        DefaultIvyArtifactName artifactName = createArtifactName(artifactFile)
+
+        return new DefaultResolvedArtifact(
+                new PublishArtifactLocalArtifactMetadata(
+                        new ComponentIdentifier() {
+                            @Override
+                            String getDisplayName() {
+                                return artifactName.name
+                            }
+                        },
+                        new LazyPublishArtifact(bundleProvider, fileResolver, taskDependencyFactory)
+                ),
+                calculatedValueContainerFactory.create(Describables.of(artifactFile.name), artifactFile),
+                identifier, artifactName
+
+        )
+    }
+
     private static ModuleVersionIdentifier createModuleVersionIdentifier(ResolvedDependency unResolvedArtifact) {
         return DefaultModuleVersionIdentifier.newId(
                 unResolvedArtifact.getModuleGroup(),
@@ -141,6 +182,29 @@ class FlavorArtifact {
         }
 
         return bundleTaskProvider
+    }
+
+    private static TaskProvider getBundleTask(Project project, VariantInfo variantInfo) {
+        List<String> candidates = new ArrayList<>()
+        if (variantInfo.name != null) {
+            candidates.add(variantInfo.name)
+        }
+        if (variantInfo.buildTypeName != null) {
+            candidates.add(variantInfo.buildTypeName)
+        }
+        if (variantInfo.flavorName != null && variantInfo.buildTypeName != null) {
+            candidates.add(variantInfo.flavorName + variantInfo.buildTypeName.capitalize())
+        }
+        if (variantInfo.flavorName != null) {
+            candidates.add(variantInfo.flavorName)
+        }
+        for (String candidate : candidates) {
+            try {
+                return VersionAdapter.getBundleTaskProvider(project, candidate)
+            } catch (Exception ignore) {
+            }
+        }
+        return null
     }
 
 }

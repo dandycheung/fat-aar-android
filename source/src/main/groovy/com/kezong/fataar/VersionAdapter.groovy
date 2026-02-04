@@ -14,48 +14,65 @@ final class VersionAdapter {
 
     private final Project mProject
     private final LibraryVariant mVariant
+    private final VariantInfo mVariantInfo
 
     VersionAdapter(final Project project, final LibraryVariant variant) {
         mProject = project
         mVariant = variant
+        mVariantInfo = VariantInfo.fromLegacy(variant)
+    }
+
+    VersionAdapter(final Project project, final VariantInfo variantInfo) {
+        mProject = project
+        mVariant = null
+        mVariantInfo = variantInfo
     }
 
     ConfigurableFileCollection getClassPathDirFiles() {
         ConfigurableFileCollection classpath
         if (FatUtils.compareVersion(AGPVersion, "8.3.0") >= 0) {
             classpath = mProject.files("${mProject.buildDir.path}/intermediates/" +
-                    "javac/${mVariant.name}/compile${mVariant.name.capitalize()}JavaWithJavac/classes")
+                    "javac/${mVariantInfo.name}/compile${mVariantInfo.name.capitalize()}JavaWithJavac/classes")
         } else {
             classpath = mProject.files("${mProject.buildDir.path}/intermediates/" +
-                    "javac/${mVariant.name}/classes")
+                    "javac/${mVariantInfo.name}/classes")
         }
         return classpath
     }
 
     File getLibsDirFile() {
         return mProject.file(
-                "${mProject.buildDir.path}/intermediates/aar_libs_directory/${mVariant.name}/sync${mVariant.name.capitalize()}LibJars/libs"
+                "${mProject.buildDir.path}/intermediates/aar_libs_directory/${mVariantInfo.name}/sync${mVariantInfo.name.capitalize()}LibJars/libs"
         )
     }
 
     Task getJavaCompileTask() {
-        return mVariant.getJavaCompileProvider().get()
+        if (mVariant != null) {
+            return mVariant.getJavaCompileProvider().get()
+        }
+        return mProject.tasks.named("compile${mVariantInfo.name.capitalize()}JavaWithJavac").get()
     }
 
     ManifestProcessorTask getProcessManifest() {
-        return mVariant.getOutputs().first().getProcessManifestProvider().get()
+        if (mVariant != null) {
+            return mVariant.getOutputs().first().getProcessManifestProvider().get()
+        }
+        return mProject.tasks.named("process${mVariantInfo.name.capitalize()}Manifest", ManifestProcessorTask).get()
     }
 
     Task getMergeAssets() {
-        return mVariant.getMergeAssetsProvider().get()
+        if (mVariant != null) {
+            return mVariant.getMergeAssetsProvider().get()
+        }
+        return mProject.tasks.named("merge${mVariantInfo.name.capitalize()}Assets").get()
     }
 
     String getSyncLibJarsTaskPath() {
-        return "sync${mVariant.name.capitalize()}LibJars"
+        return "sync${mVariantInfo.name.capitalize()}LibJars"
     }
 
     File getOutputFile() {
-        return outputFile(mProject, mVariant, AGPVersion)
+        return outputFile(mProject, mVariantInfo.name, AGPVersion)
     }
 
     static TaskProvider<Task> getBundleTaskProvider(Project project, String variantName) throws UnknownTaskException {
@@ -68,6 +85,13 @@ final class VersionAdapter {
             bundleTask = project.tasks.named(taskPath)
         }
         return bundleTask
+    }
+
+    static File outputFile(Project project, String variantName, String agpVersion) {
+        if (FatUtils.compareVersion(agpVersion, "8.4.0") >= 0) {
+            return project.file("${project.buildDir.path}/intermediates/aar/${variantName}/bundle${variantName.capitalize()}Aar/output.aar")
+        }
+        return project.file("${project.buildDir.path}/outputs/aar/${project.name}-${variantName}.aar")
     }
 
     static String getAGPVersion() {
