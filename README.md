@@ -3,9 +3,10 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/aasitnikov/fat-aar-android/blob/master/LICENSE)
 [![JitPack](https://jitpack.io/v/aasitnikov/fat-aar-android.svg)](https://jitpack.io/#aasitnikov/fat-aar-android)
 
-The solution of merging aar works with [AGP][3] 8.0+ (tested up to 8.13)
+The solution of merging aar works with [AGP][3] 8.0+ (tested up to 9.0)
 
-Plugin is in maintenance mode, please consider official [Fused Library Plugin](https://developer.android.com/build/publish-library/fused-library)
+> [!CAUTION]
+> Plugin is in maintenance mode, consider official [Fused Library Plugin](https://developer.android.com/build/publish-library/fused-library)
 
 ## Getting Started
 
@@ -22,7 +23,7 @@ buildscript {
         }
     }
     dependencies {
-        classpath("com.github.aasitnikov:fat-aar-android:1.4.4")
+        classpath("com.github.aasitnikov:fat-aar-android:1.4.5")
     }
 }
 ```
@@ -118,6 +119,7 @@ See [anatomy of an aar file here][2].
 ## Gradle Version Support
 |     Version     | Android Gradle Plugin |  Gradle   |
 |:---------------:|:---------------------:|:---------:|
+|      1.4.5      |          9.0          |   9.3.0   |
 |      1.4.4      |         8.13          |   8.14    |
 |      1.4.2      |          8.7          |   8.12    |
 |      1.4.1      |          8.5          |    8.7    |
@@ -142,6 +144,8 @@ The following link which version of Gradle is required for each version of the A
 [Plugin version and Required Gradle version](https://developer.android.com/build/releases/gradle-plugin)
 
 ## Version Log
+- [1.4.5](<https://github.com/aasitnikov/fat-aar-android/releases/tag/1.4.5>)
+  - Add support for AGP 9.0 [#4](https://github.com/aasitnikov/fat-aar-android/pull/4). Thanks, [@erykrutkowski](https://github.com/erykrutkowski)!
 - [1.4.4](<https://github.com/aasitnikov/fat-aar-android/releases/tag/1.4.4>)
   - Fix build error when assembling app module with version 1.4.3 [#3](https://github.com/aasitnikov/fat-aar-android/pull/3). Thanks, [@NormanWangEndeavor](https://github.com/NormanWangEndeavor)!
 - [1.4.3](<https://github.com/aasitnikov/fat-aar-android/releases/tag/1.4.3>)
